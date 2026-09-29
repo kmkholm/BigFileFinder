@@ -1,0 +1,6 @@
+*.csv
+*.log
+_part*.ps1
+_gui.ps1
+Thumbs.db
+desktop.ini
