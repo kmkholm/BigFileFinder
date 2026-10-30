@@ -1,11 +1,18 @@
 ﻿#requires -Version 5.1
 <#
     BigFileFinder - باحث الملفات الضخمة
-    يفحص أي مسار (أو قرص كامل) ويعرض أكبر الملفات والمجلدات مرتبة تنازلياً
-    مع خيارات: حذف إلى سلة المحذوفات، حذف نهائي، نقل، فتح الموقع، تصدير CSV.
+    Dr. Mohammed Tawfik - kmkhol01@gmail.com - MIT License
+    https://github.com/kmkholm/BigFileFinder
 
-    الاستخدام:
-      BigFileFinder.cmd                                        (واجهة رسومية)
+    Finds the huge files Windows Explorer refuses to show or sort, in any folder
+    or whole drive, and deletes, moves or exports them. Bilingual interface:
+    Arabic (right-to-left) and English, switched from the button in the toolbar.
+
+    واجهة بلغتين: العربية والإنجليزية، تُبدَّل من الزر في شريط الأدوات.
+
+    Usage / الاستخدام:
+      BigFileFinder.cmd
+      powershell -File BigFileFinder.ps1 -Lang en -Path "D:\" -AutoScan
       powershell -File BigFileFinder.ps1 -NoGui -Path "C:\" -MinSizeMB 500
 #>
 [CmdletBinding()]
@@ -17,6 +24,8 @@ param(
     [switch]$NoGui,
     [switch]$AutoScan,
     [string]$Shot = '',
+    [ValidateSet('ar','en')]
+    [string]$Lang = '',
     [switch]$SelfTest
 )
 
@@ -228,7 +237,7 @@ function Get-DriveInfoText {
         $d = New-Object System.IO.DriveInfo ($rootp)
         if (-not $d.IsReady) { return '' }
         $used = $d.TotalSize - $d.TotalFreeSpace
-        return ('القرص {0} مستخدم {1} من {2} — متبقٍ {3}' -f $d.Name, (Format-Size $used), (Format-Size $d.TotalSize), (Format-Size $d.TotalFreeSpace))
+        return ($script:L.DriveFmt -f $d.Name, (Format-Size $used), (Format-Size $d.TotalSize), (Format-Size $d.TotalFreeSpace))
     } catch { return '' }
 }
 
@@ -241,20 +250,207 @@ function Test-ExtMatch {
 }
 
 # ==================================================================
-#  الوضع النصي (بدون واجهة)
+#  اللغة / Language
+# ==================================================================
+function Get-LangFile {
+    $dir = Join-Path $env:LOCALAPPDATA 'BigFileFinder'
+    if (-not (Test-Path -LiteralPath $dir)) { [void](New-Item -ItemType Directory -Path $dir -Force) }
+    return (Join-Path $dir 'lang.txt')
+}
+
+function Resolve-Lang {
+    param([string]$Requested)
+    if ($Requested) { return $Requested.ToLower() }
+    try {
+        $lf = Get-LangFile
+        if (Test-Path -LiteralPath $lf) {
+            $v = ([string](Get-Content -LiteralPath $lf -Raw)).Trim().ToLower()
+            if ($v -eq 'en' -or $v -eq 'ar') { return $v }
+        }
+    } catch { }
+    # لا يوجد اختيار محفوظ: اتبع لغة النظام / no saved choice: follow the system language
+    try {
+        if ([System.Globalization.CultureInfo]::CurrentUICulture.TwoLetterISOLanguageName -eq 'ar') { return 'ar' }
+    } catch { }
+    return 'en'
+}
+
+function Save-Lang {
+    param([string]$v)
+    try { [System.IO.File]::WriteAllText((Get-LangFile), $v, [System.Text.Encoding]::ASCII) } catch { }
+}
+
+function Get-Strings {
+    param([string]$lang)
+    if ($lang -eq 'en') {
+        return @{
+            WinTitle   = 'BigFileFinder - Dr. Mohammed Tawfik'
+            AppName    = 'BigFileFinder'
+            Tagline    = 'Disk space analysis and cleanup - version {0}'
+            LangBtn    = 'عربي'
+            PathLbl    = 'Path:'
+            Browse     = 'Browse'
+            Admin      = 'Run as admin'
+            About      = 'About'
+            MinSizeLbl = 'Min size (MB):'
+            RowsLbl    = 'Rows:'
+            Scan       = 'Scan'
+            Stop       = 'Stop'
+            SearchLbl  = 'Search:'
+            ExtLbl     = 'Extensions:'
+            TipExt     = 'e.g. mp4;iso;zip;pdf   (empty = all types)'
+            TipFilter  = 'any text inside the file path'
+            TabFiles   = '  Largest files  '
+            TabDirs    = '  Largest folders  '
+            ColName    = 'File name'
+            ColSize    = 'Size'
+            ColType    = 'Type'
+            ColMod     = 'Modified'
+            ColDir     = 'Folder'
+            ColDPath   = 'Folder'
+            ColDSize   = 'Total size'
+            ColDCnt    = 'Files'
+            Open       = 'Open location'
+            CopyPath   = 'Copy path'
+            ExportCsv  = 'Export CSV'
+            MoveTo     = 'Move to folder'
+            Recycle    = 'Delete to Recycle Bin'
+            Perm       = 'Delete permanently'
+            Leg1       = 'over 5 GB'
+            Leg2       = 'over 1 GB'
+            Leg3       = 'over 200 MB'
+            Ready      = 'Ready - choose a path, then click Scan'
+            Scanning   = 'Scanning...  {0:N0} files   |   {1}   |   large files: {2:N0}   |   {3}'
+            Finished   = 'Finished: {0:N0} files / {1} in {2:N1} s - protected folders skipped: {3}{4}'
+            Showing    = 'Showing {0:N0} files, {1}   |   total results {2:N0}   |   {3}'
+            Capped     = '   (result cap reached - raise Min size)'
+            ErrPrefix  = '   Error: '
+            Copied     = '{0} path(s) copied to the clipboard.'
+            ExportedTo = 'Exported to: '
+            DriveFmt   = 'Drive {0}  {1} used of {2} - {3} free'
+            WarnTitle  = 'Notice'
+            ErrTitle   = 'Error'
+            ResTitle   = 'Result'
+            ConfTitle  = 'Confirm delete'
+            PickPath   = 'Choose a path first.'
+            NoPath     = 'Path not found:'
+            SelectOne  = 'Select at least one item.'
+            NoResults  = 'No results to export.'
+            BrowseDesc = 'Choose the folder or drive to scan'
+            DestDesc   = 'Choose the destination folder'
+            KindRecyc  = 'to the Recycle Bin'
+            KindPerm   = 'permanently (this cannot be undone)'
+            DelHead    = '{0} item(s), {1}, will be deleted {2}'
+            AndMore    = '... and {0} more'
+            Proceed    = 'Do you want to continue?'
+            DelDone    = 'Deleted {0} item(s) - {1} freed'
+            FailHead   = '{0} item(s) failed:'
+            MoveDone   = 'Moved {0} item(s) to: {1}'
+            AdminFail  = 'Could not restart as administrator.'
+            AboutBody  = 'BigFileFinder - version {0}{1}{1}By: Dr. Mohammed Tawfik{1}{2}{1}{1}Finds the huge files Windows Explorer refuses to show or sort, and deletes or moves them.'
+            CScan      = 'Scanning: {0}   (min size {1} MB)'
+            CDone      = 'Scanned {0:N0} files, {1}, in {2:N1} s - protected folders skipped: {3}'
+            CDirs      = 'Largest folders:'
+            CNoPath    = 'Use -Path to specify the folder in text mode.'
+            CBadPath   = 'Path not found: '
+        }
+    }
+    return @{
+        WinTitle   = 'باحث الملفات الضخمة — د. محمد توفيق'
+        AppName    = 'باحث الملفات الضخمة'
+        Tagline    = 'تحليل المساحة وتنظيف الأقراص — إصدار {0}'
+        LangBtn    = 'English'
+        PathLbl    = 'المسار:'
+        Browse     = 'استعراض'
+        Admin      = 'تشغيل كمسؤول'
+        About      = 'عن البرنامج'
+        MinSizeLbl = 'أصغر حجم (م.ب):'
+        RowsLbl    = 'عدد النتائج:'
+        Scan       = 'ابدأ الفحص'
+        Stop       = 'إيقاف'
+        SearchLbl  = 'بحث:'
+        ExtLbl     = 'امتدادات:'
+        TipExt     = 'مثال: mp4;iso;zip;pdf   (فارغ = كل الأنواع)'
+        TipFilter  = 'أي نص داخل مسار الملف'
+        TabFiles   = '  أكبر الملفات  '
+        TabDirs    = '  أكبر المجلدات  '
+        ColName    = 'اسم الملف'
+        ColSize    = 'الحجم'
+        ColType    = 'النوع'
+        ColMod     = 'آخر تعديل'
+        ColDir     = 'المجلد'
+        ColDPath   = 'المجلد'
+        ColDSize   = 'الحجم الكلي'
+        ColDCnt    = 'عدد الملفات'
+        Open       = 'فتح الموقع'
+        CopyPath   = 'نسخ المسار'
+        ExportCsv  = 'تصدير CSV'
+        MoveTo     = 'نقل إلى مجلد'
+        Recycle    = 'حذف إلى سلة المحذوفات'
+        Perm       = 'حذف نهائي'
+        Leg1       = 'أكبر من 5 ج.ب'
+        Leg2       = 'أكبر من 1 ج.ب'
+        Leg3       = 'أكبر من 200 م.ب'
+        Ready      = 'جاهز — اختر مساراً ثم اضغط «ابدأ الفحص»'
+        Scanning   = 'جارٍ الفحص...  {0:N0} ملف   |   {1}   |   ملفات كبيرة: {2:N0}   |   {3}'
+        Finished   = 'انتهى الفحص: {0:N0} ملف / {1} خلال {2:N1} ثانية — مجلدات محمية تم تخطيها: {3}{4}'
+        Showing    = 'معروض {0:N0} ملف بحجم {1}   |   إجمالي النتائج {2:N0}   |   {3}'
+        Capped     = '   (بلغت الحد الأقصى — ارفع «أصغر حجم»)'
+        ErrPrefix  = '   خطأ: '
+        Copied     = 'تم نسخ {0} مسار إلى الحافظة.'
+        ExportedTo = 'تم التصدير إلى: '
+        DriveFmt   = 'القرص {0} مستخدم {1} من {2} — متبقٍ {3}'
+        WarnTitle  = 'تنبيه'
+        ErrTitle   = 'خطأ'
+        ResTitle   = 'النتيجة'
+        ConfTitle  = 'تأكيد الحذف'
+        PickPath   = 'اختر مساراً أولاً.'
+        NoPath     = 'المسار غير موجود:'
+        SelectOne  = 'حدد عنصراً واحداً على الأقل.'
+        NoResults  = 'لا توجد نتائج للتصدير.'
+        BrowseDesc = 'اختر المجلد أو القرص المراد فحصه'
+        DestDesc   = 'اختر مجلد الوجهة'
+        KindRecyc  = 'إلى سلة المحذوفات'
+        KindPerm   = 'حذفاً نهائياً (لا يمكن التراجع)'
+        DelHead    = 'سيتم حذف {0} عنصراً بحجم {1} {2}'
+        AndMore    = '... و {0} عنصراً آخر'
+        Proceed    = 'هل تريد المتابعة؟'
+        DelDone    = 'تم حذف {0} عنصراً — تحرير {1}'
+        FailHead   = 'فشل {0} عنصراً:'
+        MoveDone   = 'تم نقل {0} عنصراً إلى: {1}'
+        AdminFail  = 'تعذّر التشغيل كمسؤول.'
+        AboutBody  = 'باحث الملفات الضخمة — إصدار {0}{1}{1}إعداد: د. محمد توفيق{1}{2}{1}{1}أداة تجد الملفات الضخمة التي لا يُظهرها مستكشف ويندوز ولا يرتّبها، وتحذفها أو تنقلها.'
+        CScan      = 'فحص: {0}   (أصغر حجم {1} م.ب)'
+        CDone      = 'تم فحص {0:N0} ملف بحجم {1} خلال {2:N1} ثانية — مجلدات محمية تم تخطيها: {3}'
+        CDirs      = 'أكبر المجلدات:'
+        CNoPath    = 'استخدم -Path لتحديد المسار في الوضع النصي.'
+        CBadPath   = 'المسار غير موجود: '
+    }
+}
+
+$script:AUTHOR_NAME = 'Dr. Mohammed Tawfik'
+$script:AUTHOR_AR   = 'د. محمد توفيق'
+$script:AUTHOR_MAIL = 'kmkhol01@gmail.com'
+$script:APP_VERSION = '1.2'
+$script:UILang      = Resolve-Lang $Lang
+$script:L           = Get-Strings $script:UILang
+
+# ==================================================================
+#  الوضع النصي (بدون واجهة) / Text mode
 # ==================================================================
 function Invoke-ConsoleScan {
     param([string]$Root, [double]$MinMB, [int]$TopN, [string]$CsvOut)
 
-    if (-not (Test-Path -LiteralPath $Root)) { throw "المسار غير موجود: $Root" }
+    $L = $script:L
+    if (-not (Test-Path -LiteralPath $Root)) { throw ($L.CBadPath + $Root) }
     $minBytes = [long]($MinMB * 1MB)
-    Write-Host ('فحص: {0}   (أصغر حجم {1} م.ب)' -f $Root, $MinMB) -ForegroundColor Cyan
+    Write-Host ($L.CScan -f $Root, $MinMB) -ForegroundColor Cyan
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $sc = New-Object BigFileScanner
     $sc.Scan($Root, $minBytes)
     $sw.Stop()
 
-    Write-Host ('تم فحص {0:N0} ملف بحجم {1} خلال {2:N1} ثانية — مجلدات محمية تم تخطيها: {3}' -f $sc.Scanned, (Format-Size $sc.TotalBytes), $sw.Elapsed.TotalSeconds, $sc.Denied) -ForegroundColor Green
+    Write-Host ($L.CDone -f $sc.Scanned, (Format-Size $sc.TotalBytes), $sw.Elapsed.TotalSeconds, $sc.Denied) -ForegroundColor Green
 
     $rows = foreach ($f in $sc.TopFiles($TopN)) {
         [PSCustomObject]@{
@@ -266,31 +462,28 @@ function Invoke-ConsoleScan {
     }
     $rows | Select-Object -First 60 | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
 
-    Write-Host 'أكبر المجلدات:' -ForegroundColor Cyan
+    Write-Host $L.CDirs -ForegroundColor Cyan
     $sc.TopFolders($Root, 25) | ForEach-Object {
         [PSCustomObject]@{ Size = (Format-Size $_.SizeBytes); Files = $_.FileCount; Folder = $_.FullPath }
     } | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
 
     if ($CsvOut) {
         $rows | Export-Csv -LiteralPath $CsvOut -NoTypeInformation -Encoding UTF8
-        Write-Host ('تم التصدير إلى: ' + $CsvOut) -ForegroundColor Yellow
+        Write-Host ($L.ExportedTo + $CsvOut) -ForegroundColor Yellow
     }
 }
 
 # ==================================================================
-#  الواجهة الرسومية
+#  الواجهة الرسومية / Graphical interface
 # ==================================================================
-$script:AUTHOR_NAME  = 'Dr. Mohammed Tawfik'
-$script:AUTHOR_AR    = 'د. محمد توفيق'
-$script:AUTHOR_MAIL  = 'kmkhol01@gmail.com'
-$script:APP_VERSION  = '1.1'
-
 function Show-BigFileFinder {
     param([switch]$BuildOnly)
 
     [System.Windows.Forms.Application]::EnableVisualStyles()
+    $L = $script:L
+    $isAr = ($script:UILang -eq 'ar')
 
-    # ---------- لوحة الألوان ----------
+    # ---------- لوحة الألوان / palette ----------
     $C_Dark   = [System.Drawing.Color]::FromArgb(15, 44, 77)
     $C_Dark2  = [System.Drawing.Color]::FromArgb(24, 66, 110)
     $C_Accent = [System.Drawing.Color]::FromArgb(45, 125, 210)
@@ -301,10 +494,10 @@ function Show-BigFileFinder {
     $C_Orange = [System.Drawing.Color]::FromArgb(214, 93, 14)
     $C_Red    = [System.Drawing.Color]::FromArgb(183, 28, 28)
     $C_Gray   = [System.Drawing.Color]::FromArgb(96, 104, 115)
+    $C_Gold   = [System.Drawing.Color]::FromArgb(176, 124, 20)
     $C_White  = [System.Drawing.Color]::White
     $C_SubTxt = [System.Drawing.Color]::FromArgb(158, 195, 232)
 
-    # ألوان تدرّج الأحجام
     $T1_BG = [System.Drawing.Color]::FromArgb(253, 226, 228); $T1_FG = [System.Drawing.Color]::FromArgb(150, 20, 20)
     $T2_BG = [System.Drawing.Color]::FromArgb(255, 238, 213); $T2_FG = [System.Drawing.Color]::FromArgb(150, 75, 0)
     $T3_BG = [System.Drawing.Color]::FromArgb(255, 250, 212); $T3_FG = [System.Drawing.Color]::FromArgb(90, 80, 0)
@@ -319,22 +512,27 @@ function Show-BigFileFinder {
     $script:AutoStart = ($AutoScan -or ($Path -ne ''))
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'باحث الملفات الضخمة — ' + $script:AUTHOR_AR
+    $form.Text = $L.WinTitle
     $form.Size = New-Object System.Drawing.Size(1200, 780)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
     $form.MinimumSize = New-Object System.Drawing.Size(1020, 600)
     $form.BackColor = $C_Bar
-    $form.RightToLeft = 'Yes'
-    $form.RightToLeftLayout = $true
+    if ($isAr) {
+        $form.RightToLeft = 'Yes'
+        $form.RightToLeftLayout = $true
+    } else {
+        $form.RightToLeft = 'No'
+        $form.RightToLeftLayout = $false
+    }
 
-    # ================= الترويسة =================
+    # ================= الترويسة / header =================
     $hdr = New-Object System.Windows.Forms.Panel
     $hdr.Dock = 'Top'; $hdr.Height = 60; $hdr.BackColor = $C_Dark
     $form.Controls.Add($hdr)
 
     $lblLogo = New-Object System.Windows.Forms.Label
-    $lblLogo.Text = 'باحث الملفات الضخمة'
+    $lblLogo.Text = $L.AppName
     $lblLogo.Font = New-Object System.Drawing.Font('Segoe UI', 14, [System.Drawing.FontStyle]::Bold)
     $lblLogo.ForeColor = $C_White
     $lblLogo.AutoSize = $true
@@ -342,7 +540,7 @@ function Show-BigFileFinder {
     $hdr.Controls.Add($lblLogo)
 
     $lblSub = New-Object System.Windows.Forms.Label
-    $lblSub.Text = 'تحليل المساحة وتنظيف الأقراص — إصدار ' + $script:APP_VERSION
+    $lblSub.Text = ($L.Tagline -f $script:APP_VERSION)
     $lblSub.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
     $lblSub.ForeColor = $C_SubTxt
     $lblSub.AutoSize = $true
@@ -353,7 +551,7 @@ function Show-BigFileFinder {
     $lblAuthor.Text = $script:AUTHOR_AR + '   |   ' + $script:AUTHOR_NAME
     $lblAuthor.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
     $lblAuthor.ForeColor = $C_White
-    $lblAuthor.TextAlign = 'MiddleLeft'
+    $lblAuthor.TextAlign = 'MiddleRight'
     $lblAuthor.Location = New-Object System.Drawing.Point(700, 10)
     $lblAuthor.Size = New-Object System.Drawing.Size(360, 20)
     $lblAuthor.Anchor = 'Top,Right'
@@ -363,13 +561,13 @@ function Show-BigFileFinder {
     $lblMail.Text = $script:AUTHOR_MAIL
     $lblMail.Font = New-Object System.Drawing.Font('Segoe UI', 8.5)
     $lblMail.ForeColor = $C_SubTxt
-    $lblMail.TextAlign = 'MiddleLeft'
+    $lblMail.TextAlign = 'MiddleRight'
     $lblMail.Location = New-Object System.Drawing.Point(700, 32)
     $lblMail.Size = New-Object System.Drawing.Size(360, 18)
     $lblMail.Anchor = 'Top,Right'
     $hdr.Controls.Add($lblMail)
 
-    # ================= شريط الأدوات =================
+    # ================= شريط الأدوات / toolbar =================
     $pTop = New-Object System.Windows.Forms.Panel
     $pTop.Dock = 'Top'; $pTop.Height = 84; $pTop.BackColor = $C_White
     $form.Controls.Add($pTop)
@@ -396,11 +594,11 @@ function Show-BigFileFinder {
         $b.Cursor = [System.Windows.Forms.Cursors]::Hand
     }
 
-    [void](New-Lbl 'المسار:' 12 15 50)
+    [void](New-Lbl $L.PathLbl 12 15 50)
 
     $script:txtPath = New-Object System.Windows.Forms.TextBox
     $script:txtPath.Location = New-Object System.Drawing.Point(66, 12)
-    $script:txtPath.Size = New-Object System.Drawing.Size(676, 25)
+    $script:txtPath.Size = New-Object System.Drawing.Size(634, 25)
     $script:txtPath.Anchor = 'Top,Left,Right'
     $script:txtPath.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
     $script:txtPath.BorderStyle = 'FixedSingle'
@@ -408,30 +606,38 @@ function Show-BigFileFinder {
     $pTop.Controls.Add($script:txtPath)
 
     $btnBrowse = New-Object System.Windows.Forms.Button
-    $btnBrowse.Text = 'استعراض'
-    $btnBrowse.Location = New-Object System.Drawing.Point(750, 11)
-    $btnBrowse.Size = New-Object System.Drawing.Size(90, 27)
+    $btnBrowse.Text = $L.Browse
+    $btnBrowse.Location = New-Object System.Drawing.Point(708, 11)
+    $btnBrowse.Size = New-Object System.Drawing.Size(84, 27)
     $btnBrowse.Anchor = 'Top,Right'
     Style-Button $btnBrowse $C_Accent $C_White
     $pTop.Controls.Add($btnBrowse)
 
     $btnAdmin = New-Object System.Windows.Forms.Button
-    $btnAdmin.Text = 'تشغيل كمسؤول'
-    $btnAdmin.Location = New-Object System.Drawing.Point(846, 11)
-    $btnAdmin.Size = New-Object System.Drawing.Size(120, 27)
+    $btnAdmin.Text = $L.Admin
+    $btnAdmin.Location = New-Object System.Drawing.Point(798, 11)
+    $btnAdmin.Size = New-Object System.Drawing.Size(112, 27)
     $btnAdmin.Anchor = 'Top,Right'
     Style-Button $btnAdmin $C_Gray $C_White
     $pTop.Controls.Add($btnAdmin)
 
     $btnAbout = New-Object System.Windows.Forms.Button
-    $btnAbout.Text = 'عن البرنامج'
-    $btnAbout.Location = New-Object System.Drawing.Point(972, 11)
-    $btnAbout.Size = New-Object System.Drawing.Size(100, 27)
+    $btnAbout.Text = $L.About
+    $btnAbout.Location = New-Object System.Drawing.Point(916, 11)
+    $btnAbout.Size = New-Object System.Drawing.Size(86, 27)
     $btnAbout.Anchor = 'Top,Right'
     Style-Button $btnAbout $C_Dark2 $C_White
     $pTop.Controls.Add($btnAbout)
 
-    [void](New-Lbl 'أصغر حجم (م.ب):' 12 51 105)
+    $btnLang = New-Object System.Windows.Forms.Button
+    $btnLang.Text = $L.LangBtn
+    $btnLang.Location = New-Object System.Drawing.Point(1008, 11)
+    $btnLang.Size = New-Object System.Drawing.Size(64, 27)
+    $btnLang.Anchor = 'Top,Right'
+    Style-Button $btnLang $C_Gold $C_White
+    $pTop.Controls.Add($btnLang)
+
+    [void](New-Lbl $L.MinSizeLbl 12 51 104)
 
     $script:numMin = New-Object System.Windows.Forms.NumericUpDown
     $script:numMin.Location = New-Object System.Drawing.Point(120, 48)
@@ -443,7 +649,7 @@ function Show-BigFileFinder {
     $script:numMin.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
     $pTop.Controls.Add($script:numMin)
 
-    [void](New-Lbl 'عدد النتائج:' 206 51 80)
+    [void](New-Lbl $L.RowsLbl 206 51 78)
 
     $script:numTop = New-Object System.Windows.Forms.NumericUpDown
     $script:numTop.Location = New-Object System.Drawing.Point(288, 48)
@@ -456,46 +662,46 @@ function Show-BigFileFinder {
     $pTop.Controls.Add($script:numTop)
 
     $script:btnScan = New-Object System.Windows.Forms.Button
-    $script:btnScan.Text = 'ابدأ الفحص'
+    $script:btnScan.Text = $L.Scan
     $script:btnScan.Location = New-Object System.Drawing.Point(372, 47)
     $script:btnScan.Size = New-Object System.Drawing.Size(104, 28)
     Style-Button $script:btnScan $C_Green $C_White
     $pTop.Controls.Add($script:btnScan)
 
     $script:btnStop = New-Object System.Windows.Forms.Button
-    $script:btnStop.Text = 'إيقاف'
+    $script:btnStop.Text = $L.Stop
     $script:btnStop.Location = New-Object System.Drawing.Point(482, 47)
     $script:btnStop.Size = New-Object System.Drawing.Size(74, 28)
     $script:btnStop.Enabled = $false
     Style-Button $script:btnStop $C_Gray $C_White
     $pTop.Controls.Add($script:btnStop)
 
-    [void](New-Lbl 'بحث:' 570 51 38)
+    [void](New-Lbl $L.SearchLbl 568 51 54)
 
     $script:txtFilter = New-Object System.Windows.Forms.TextBox
-    $script:txtFilter.Location = New-Object System.Drawing.Point(610, 48)
-    $script:txtFilter.Size = New-Object System.Drawing.Size(160, 25)
+    $script:txtFilter.Location = New-Object System.Drawing.Point(626, 48)
+    $script:txtFilter.Size = New-Object System.Drawing.Size(150, 25)
     $script:txtFilter.BorderStyle = 'FixedSingle'
     $pTop.Controls.Add($script:txtFilter)
 
-    [void](New-Lbl 'امتدادات:' 782 51 60)
+    [void](New-Lbl $L.ExtLbl 784 51 76)
 
     $script:txtExt = New-Object System.Windows.Forms.TextBox
-    $script:txtExt.Location = New-Object System.Drawing.Point(846, 48)
-    $script:txtExt.Size = New-Object System.Drawing.Size(226, 25)
+    $script:txtExt.Location = New-Object System.Drawing.Point(864, 48)
+    $script:txtExt.Size = New-Object System.Drawing.Size(208, 25)
     $script:txtExt.BorderStyle = 'FixedSingle'
     $script:txtExt.Anchor = 'Top,Right'
     $pTop.Controls.Add($script:txtExt)
 
     $tt = New-Object System.Windows.Forms.ToolTip
-    $tt.SetToolTip($script:txtExt, 'مثال: mp4;iso;zip;pdf   (فارغ = كل الأنواع)')
-    $tt.SetToolTip($script:txtFilter, 'أي نص داخل مسار الملف')
+    $tt.SetToolTip($script:txtExt, $L.TipExt)
+    $tt.SetToolTip($script:txtFilter, $L.TipFilter)
 
     $sep = New-Object System.Windows.Forms.Label
     $sep.Dock = 'Top'; $sep.Height = 1; $sep.BackColor = $C_Line
     $pTop.Controls.Add($sep)
 
-    # ================= الشريط السفلي =================
+    # ================= الشريط السفلي / bottom bar =================
     $pBot = New-Object System.Windows.Forms.Panel
     $pBot.Dock = 'Bottom'; $pBot.Height = 96; $pBot.BackColor = $C_White
     $form.Controls.Add($pBot)
@@ -506,7 +712,7 @@ function Show-BigFileFinder {
     $script:lblStatus.Anchor = 'Top,Left,Right'
     $script:lblStatus.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
     $script:lblStatus.ForeColor = $C_Dark
-    $script:lblStatus.Text = 'جاهز — اختر مساراً ثم اضغط «ابدأ الفحص»'
+    $script:lblStatus.Text = $L.Ready
     $pBot.Controls.Add($script:lblStatus)
 
     $script:prog = New-Object System.Windows.Forms.ProgressBar
@@ -530,14 +736,13 @@ function Show-BigFileFinder {
         return $b
     }
 
-    $btnOpen  = New-BottomButton 'فتح الموقع'            112 $C_Accent
-    $btnCopy  = New-BottomButton 'نسخ المسار'            108 $C_Accent
-    $btnCsv   = New-BottomButton 'تصدير CSV'             104 $C_Teal
-    $btnMove  = New-BottomButton 'نقل إلى مجلد'          120 $C_Green
-    $btnRecyc = New-BottomButton 'حذف إلى سلة المحذوفات' 178 $C_Orange
-    $btnPerm  = New-BottomButton 'حذف نهائي'             104 $C_Red
+    $btnOpen  = New-BottomButton $L.Open      112 $C_Accent
+    $btnCopy  = New-BottomButton $L.CopyPath  108 $C_Accent
+    $btnCsv   = New-BottomButton $L.ExportCsv 104 $C_Teal
+    $btnMove  = New-BottomButton $L.MoveTo    120 $C_Green
+    $btnRecyc = New-BottomButton $L.Recycle   178 $C_Orange
+    $btnPerm  = New-BottomButton $L.Perm      150 $C_Red
 
-    # مفتاح ألوان الأحجام
     function New-Legend {
         param([string]$text, $bg, $fg, [int]$w)
         $l = New-Object System.Windows.Forms.Label
@@ -553,22 +758,23 @@ function Show-BigFileFinder {
         $script:bx = $script:bx + $w + 4
         return $l
     }
-    $script:bx = $script:bx + 14
-    [void](New-Legend 'أكبر من 5 ج.ب' $T1_BG $T1_FG 92)
-    [void](New-Legend 'أكبر من 1 ج.ب' $T2_BG $T2_FG 92)
-    [void](New-Legend 'أكبر من 200 م.ب' $T3_BG $T3_FG 104)
+    $script:bx = $script:bx + 10
+    [void](New-Legend $L.Leg1 $T1_BG $T1_FG 92)
+    [void](New-Legend $L.Leg2 $T2_BG $T2_FG 92)
+    [void](New-Legend $L.Leg3 $T3_BG $T3_FG 104)
 
     $lblCredit = New-Object System.Windows.Forms.Label
     $lblCredit.Text = $script:AUTHOR_AR + ' — ' + $script:AUTHOR_MAIL
+    if (-not $isAr) { $lblCredit.Text = $script:AUTHOR_NAME + ' — ' + $script:AUTHOR_MAIL }
     $lblCredit.Font = New-Object System.Drawing.Font('Segoe UI', 8)
     $lblCredit.ForeColor = [System.Drawing.Color]::FromArgb(130, 140, 155)
-    $lblCredit.TextAlign = 'MiddleLeft'
-    $lblCredit.Location = New-Object System.Drawing.Point(940, 76)
-    $lblCredit.Size = New-Object System.Drawing.Size(232, 16)
+    $lblCredit.TextAlign = 'MiddleRight'
+    $lblCredit.Location = New-Object System.Drawing.Point(862, 76)
+    $lblCredit.Size = New-Object System.Drawing.Size(310, 16)
     $lblCredit.Anchor = 'Top,Right'
     $pBot.Controls.Add($lblCredit)
 
-    # ================= الجداول =================
+    # ================= الجداول / grids =================
     $tabs = New-Object System.Windows.Forms.TabControl
     $tabs.Dock = 'Fill'
     $tabs.Font = New-Object System.Drawing.Font('Segoe UI', 9.5, [System.Drawing.FontStyle]::Bold)
@@ -576,8 +782,8 @@ function Show-BigFileFinder {
     $tabs.BringToFront()
     $hdr.SendToBack()
 
-    $t1 = New-Object System.Windows.Forms.TabPage; $t1.Text = '  أكبر الملفات  '; $t1.BackColor = $C_White
-    $t2 = New-Object System.Windows.Forms.TabPage; $t2.Text = '  أكبر المجلدات  '; $t2.BackColor = $C_White
+    $t1 = New-Object System.Windows.Forms.TabPage; $t1.Text = $L.TabFiles; $t1.BackColor = $C_White
+    $t2 = New-Object System.Windows.Forms.TabPage; $t2.Text = $L.TabDirs;  $t2.BackColor = $C_White
     $tabs.TabPages.Add($t1)
     $tabs.TabPages.Add($t2)
 
@@ -625,20 +831,20 @@ function Show-BigFileFinder {
     }
 
     $script:dgvF = New-Grid
-    Add-Col $script:dgvF 'colName'  'اسم الملف'  290 $true  $false
-    Add-Col $script:dgvF 'colSize'  'الحجم'      100 $true  $true
-    Add-Col $script:dgvF 'colExt'   'النوع'       70 $true  $false
-    Add-Col $script:dgvF 'colMod'   'آخر تعديل'  120 $true  $false
-    Add-Col $script:dgvF 'colDir'   'المجلد'     530 $true  $false
-    Add-Col $script:dgvF 'colBytes' 'bytes'       10 $false $false
-    Add-Col $script:dgvF 'colFull'  'full'        10 $false $false
+    Add-Col $script:dgvF 'colName'  $L.ColName 290 $true  $false
+    Add-Col $script:dgvF 'colSize'  $L.ColSize 100 $true  $true
+    Add-Col $script:dgvF 'colExt'   $L.ColType  70 $true  $false
+    Add-Col $script:dgvF 'colMod'   $L.ColMod  120 $true  $false
+    Add-Col $script:dgvF 'colDir'   $L.ColDir  530 $true  $false
+    Add-Col $script:dgvF 'colBytes' 'bytes'     10 $false $false
+    Add-Col $script:dgvF 'colFull'  'full'      10 $false $false
     $t1.Controls.Add($script:dgvF)
 
     $script:dgvD = New-Grid
-    Add-Col $script:dgvD 'colDPath'  'المجلد'       770 $true  $false
-    Add-Col $script:dgvD 'colDSize'  'الحجم الكلي'  120 $true  $true
-    Add-Col $script:dgvD 'colDCnt'   'عدد الملفات'  110 $true  $false
-    Add-Col $script:dgvD 'colDBytes' 'bytes'         10 $false $false
+    Add-Col $script:dgvD 'colDPath'  $L.ColDPath 770 $true  $false
+    Add-Col $script:dgvD 'colDSize'  $L.ColDSize 120 $true  $true
+    Add-Col $script:dgvD 'colDCnt'   $L.ColDCnt  110 $true  $false
+    Add-Col $script:dgvD 'colDBytes' 'bytes'      10 $false $false
     $t2.Controls.Add($script:dgvD)
 
     $sortHandler = {
@@ -656,7 +862,7 @@ function Show-BigFileFinder {
     $script:dgvF.add_SortCompare($sortHandler)
     $script:dgvD.add_SortCompare($sortHandler)
 
-    # ---------- تعبئة الجداول ----------
+    # ---------- تعبئة الجداول / fill ----------
     function Update-FilesGrid {
         $exts = @()
         $raw = $script:txtExt.Text.Trim()
@@ -683,7 +889,7 @@ function Show-BigFileFinder {
             $sum = $sum + $it.SizeBytes
         }
         $script:dgvF.ResumeLayout()
-        $script:lblStatus.Text = ('معروض {0:N0} ملف بحجم {1}   |   إجمالي النتائج {2:N0}   |   {3}' -f $n, (Format-Size $sum), $script:Results.Count, (Get-DriveInfoText $script:Root))
+        $script:lblStatus.Text = ($script:L.Showing -f $n, (Format-Size $sum), $script:Results.Count, (Get-DriveInfoText $script:Root))
     }
 
     function Update-FoldersGrid {
@@ -701,7 +907,7 @@ function Show-BigFileFinder {
         $script:dgvD.ResumeLayout()
     }
 
-    # ---------- الفحص ----------
+    # ---------- الفحص / scanning ----------
     $script:timer = New-Object System.Windows.Forms.Timer
     $script:timer.Interval = 300
 
@@ -724,26 +930,26 @@ function Show-BigFileFinder {
         $secs = 0.0
         if ($script:Stopwatch) { $secs = $script:Stopwatch.Elapsed.TotalSeconds }
         $extra = ''
-        if ($s.Truncated) { $extra = '   (بلغت الحد الأقصى — ارفع «أصغر حجم»)' }
-        if ($s.Error) { $extra = $extra + '   خطأ: ' + $s.Error }
-        $script:lblStatus.Text = ('انتهى الفحص: {0:N0} ملف / {1} خلال {2:N1} ثانية — مجلدات محمية تم تخطيها: {3}{4}' -f $s.Scanned, (Format-Size $s.TotalBytes), $secs, $s.Denied, $extra)
+        if ($s.Truncated) { $extra = $script:L.Capped }
+        if ($s.Error) { $extra = $extra + $script:L.ErrPrefix + $s.Error }
+        $script:lblStatus.Text = ($script:L.Finished -f $s.Scanned, (Format-Size $s.TotalBytes), $secs, $s.Denied, $extra)
     }
 
     $script:timer.Add_Tick({
         $s = $script:Scanner
         if ($null -eq $s) { return }
         if ($s.Done) { Complete-Scan; return }
-        $script:lblStatus.Text = ('جارٍ الفحص...  {0:N0} ملف   |   {1}   |   ملفات كبيرة: {2:N0}   |   {3}' -f $s.Scanned, (Format-Size $s.TotalBytes), $s.Files.Count, (Get-ShortPath $s.Current))
+        $script:lblStatus.Text = ($script:L.Scanning -f $s.Scanned, (Format-Size $s.TotalBytes), $s.Files.Count, (Get-ShortPath $s.Current))
     })
 
     $script:btnScan.Add_Click({
         $p = $script:txtPath.Text.Trim().Trim('"')
         if (-not $p) {
-            [void][System.Windows.Forms.MessageBox]::Show('اختر مساراً أولاً.', 'تنبيه', 'OK', 'Warning')
+            [void][System.Windows.Forms.MessageBox]::Show($script:L.PickPath, $script:L.WarnTitle, 'OK', 'Warning')
             return
         }
         if (-not (Test-Path -LiteralPath $p)) {
-            [void][System.Windows.Forms.MessageBox]::Show(('المسار غير موجود:' + [Environment]::NewLine + $p), 'خطأ', 'OK', 'Error')
+            [void][System.Windows.Forms.MessageBox]::Show(($script:L.NoPath + [Environment]::NewLine + $p), $script:L.ErrTitle, 'OK', 'Error')
             return
         }
         $script:Root = (Resolve-Path -LiteralPath $p).Path
@@ -769,37 +975,49 @@ function Show-BigFileFinder {
 
     $btnBrowse.Add_Click({
         $d = New-Object System.Windows.Forms.FolderBrowserDialog
-        $d.Description = 'اختر المجلد أو القرص المراد فحصه'
+        $d.Description = $script:L.BrowseDesc
         $d.ShowNewFolderButton = $false
         if ($script:txtPath.Text -and (Test-Path -LiteralPath $script:txtPath.Text)) { $d.SelectedPath = $script:txtPath.Text }
         if ($d.ShowDialog() -eq 'OK') { $script:txtPath.Text = $d.SelectedPath }
     })
 
     $btnAdmin.Add_Click({
-        $argline = '-NoProfile -ExecutionPolicy Bypass -STA -File "' + $PSCommandPath + '"'
+        $argline = '-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' + $PSCommandPath + '" -Lang ' + $script:UILang
         try {
             Start-Process powershell.exe -ArgumentList $argline -Verb RunAs
             $form.Close()
         } catch {
-            [void][System.Windows.Forms.MessageBox]::Show('تعذّر التشغيل كمسؤول.', 'خطأ', 'OK', 'Error')
+            [void][System.Windows.Forms.MessageBox]::Show($script:L.AdminFail, $script:L.ErrTitle, 'OK', 'Error')
+        }
+    })
+
+    $btnLang.Add_Click({
+        $newLang = 'en'
+        if ($script:UILang -eq 'en') { $newLang = 'ar' }
+        Save-Lang $newLang
+        $argline = '-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' + $PSCommandPath + '" -Lang ' + $newLang
+        $p = $script:txtPath.Text.Trim()
+        if ($p) { $argline = $argline + ' -Path "' + $p + '"' }
+        $argline = $argline + ' -MinSizeMB ' + ([double]$script:numMin.Value) + ' -Top ' + ([int]$script:numTop.Value)
+        try {
+            Start-Process powershell.exe -ArgumentList $argline
+            $form.Close()
+        } catch {
+            [void][System.Windows.Forms.MessageBox]::Show($script:L.AdminFail, $script:L.ErrTitle, 'OK', 'Error')
         }
     })
 
     $btnAbout.Add_Click({
         $nl = [Environment]::NewLine
-        $m = 'باحث الملفات الضخمة — إصدار ' + $script:APP_VERSION + $nl + $nl +
-             'إعداد: ' + $script:AUTHOR_AR + $nl +
-             $script:AUTHOR_NAME + $nl +
-             $script:AUTHOR_MAIL + $nl + $nl +
-             'أداة لتحليل مساحة الأقراص والعثور على الملفات الضخمة التي لا يُظهرها مستكشف ويندوز، مع حذفها أو نقلها.'
-        [void][System.Windows.Forms.MessageBox]::Show($m, 'عن البرنامج', 'OK', 'Information')
+        $m = $script:L.AboutBody -f $script:APP_VERSION, $nl, $script:AUTHOR_MAIL
+        [void][System.Windows.Forms.MessageBox]::Show($m, $script:L.About, 'OK', 'Information')
     })
 
     $script:txtFilter.Add_TextChanged({ if ($script:Results.Count) { Update-FilesGrid } })
     $script:txtExt.Add_TextChanged({ if ($script:Results.Count) { Update-FilesGrid } })
     $script:numTop.Add_ValueChanged({ if ($script:Results.Count) { Update-FilesGrid } })
 
-    # ---------- العمليات على العناصر المحددة ----------
+    # ---------- العمليات / actions ----------
     function Get-SelectedPaths {
         $list = New-Object System.Collections.ArrayList
         if ($tabs.SelectedIndex -eq 0) {
@@ -836,20 +1054,21 @@ function Show-BigFileFinder {
 
     function Invoke-DeleteSelected {
         param([bool]$Permanent)
+        $L = $script:L
         $paths = Get-SelectedPaths
         if ($paths.Count -eq 0) {
-            [void][System.Windows.Forms.MessageBox]::Show('حدد عنصراً واحداً على الأقل.', 'تنبيه', 'OK', 'Information')
+            [void][System.Windows.Forms.MessageBox]::Show($L.SelectOne, $L.WarnTitle, 'OK', 'Information')
             return
         }
         $bytes = Get-SelectedBytes
         $nl = [Environment]::NewLine
-        $kind = 'إلى سلة المحذوفات'
+        $kind = $L.KindRecyc
         $icon = 'Question'
-        if ($Permanent) { $kind = 'حذفاً نهائياً (لا يمكن التراجع)'; $icon = 'Warning' }
+        if ($Permanent) { $kind = $L.KindPerm; $icon = 'Warning' }
         $preview = (@($paths) | Select-Object -First 8) -join $nl
-        if ($paths.Count -gt 8) { $preview = $preview + $nl + ('... و ' + ($paths.Count - 8) + ' عنصراً آخر') }
-        $msg = ('سيتم حذف {0} عنصراً بحجم {1} {2}' -f $paths.Count, (Format-Size $bytes), $kind) + $nl + $nl + $preview + $nl + $nl + 'هل تريد المتابعة؟'
-        if ([System.Windows.Forms.MessageBox]::Show($msg, 'تأكيد الحذف', 'YesNo', $icon, 'Button2') -ne 'Yes') { return }
+        if ($paths.Count -gt 8) { $preview = $preview + $nl + ($L.AndMore -f ($paths.Count - 8)) }
+        $msg = ($L.DelHead -f $paths.Count, (Format-Size $bytes), $kind) + $nl + $nl + $preview + $nl + $nl + $L.Proceed
+        if ([System.Windows.Forms.MessageBox]::Show($msg, $L.ConfTitle, 'YesNo', $icon, 'Button2') -ne 'Yes') { return }
 
         $recycle = 'SendToRecycleBin'
         if ($Permanent) { $recycle = 'DeletePermanently' }
@@ -871,23 +1090,23 @@ function Show-BigFileFinder {
         }
         $form.Cursor = [System.Windows.Forms.Cursors]::Default
         Remove-FromView $ok
-        $nl = [Environment]::NewLine
-        $rep = ('تم حذف {0} عنصراً — تحرير {1}' -f $ok.Count, (Format-Size $bytes))
-        if ($errs.Count) { $rep = $rep + $nl + ('فشل {0} عنصراً:' -f $errs.Count) + $nl + ((@($errs) | Select-Object -First 10) -join $nl) }
-        [void][System.Windows.Forms.MessageBox]::Show($rep, 'النتيجة', 'OK', 'Information')
+        $rep = ($L.DelDone -f $ok.Count, (Format-Size $bytes))
+        if ($errs.Count) { $rep = $rep + $nl + ($L.FailHead -f $errs.Count) + $nl + ((@($errs) | Select-Object -First 10) -join $nl) }
+        [void][System.Windows.Forms.MessageBox]::Show($rep, $L.ResTitle, 'OK', 'Information')
     }
 
     $btnRecyc.Add_Click({ Invoke-DeleteSelected $false })
     $btnPerm.Add_Click({ Invoke-DeleteSelected $true })
 
     $btnMove.Add_Click({
+        $L = $script:L
         $paths = Get-SelectedPaths
         if ($paths.Count -eq 0) {
-            [void][System.Windows.Forms.MessageBox]::Show('حدد عنصراً واحداً على الأقل.', 'تنبيه', 'OK', 'Information')
+            [void][System.Windows.Forms.MessageBox]::Show($L.SelectOne, $L.WarnTitle, 'OK', 'Information')
             return
         }
         $d = New-Object System.Windows.Forms.FolderBrowserDialog
-        $d.Description = 'اختر مجلد الوجهة'
+        $d.Description = $L.DestDesc
         if ($d.ShowDialog() -ne 'OK') { return }
         $dest = $d.SelectedPath
         $ok = New-Object System.Collections.ArrayList
@@ -910,9 +1129,9 @@ function Show-BigFileFinder {
         $form.Cursor = [System.Windows.Forms.Cursors]::Default
         Remove-FromView $ok
         $nl = [Environment]::NewLine
-        $rep = ('تم نقل {0} عنصراً إلى: {1}' -f $ok.Count, $dest)
-        if ($errs.Count) { $rep = $rep + $nl + ('فشل {0} عنصراً:' -f $errs.Count) + $nl + ((@($errs) | Select-Object -First 10) -join $nl) }
-        [void][System.Windows.Forms.MessageBox]::Show($rep, 'النتيجة', 'OK', 'Information')
+        $rep = ($L.MoveDone -f $ok.Count, $dest)
+        if ($errs.Count) { $rep = $rep + $nl + ($L.FailHead -f $errs.Count) + $nl + ((@($errs) | Select-Object -First 10) -join $nl) }
+        [void][System.Windows.Forms.MessageBox]::Show($rep, $L.ResTitle, 'OK', 'Information')
     })
 
     $btnOpen.Add_Click({
@@ -930,12 +1149,13 @@ function Show-BigFileFinder {
         $paths = Get-SelectedPaths
         if ($paths.Count -eq 0) { return }
         [System.Windows.Forms.Clipboard]::SetText((@($paths) -join [Environment]::NewLine))
-        $script:lblStatus.Text = ('تم نسخ {0} مسار إلى الحافظة.' -f $paths.Count)
+        $script:lblStatus.Text = ($script:L.Copied -f $paths.Count)
     })
 
     $btnCsv.Add_Click({
+        $L = $script:L
         if ($script:Results.Count -eq 0) {
-            [void][System.Windows.Forms.MessageBox]::Show('لا توجد نتائج للتصدير.', 'تنبيه', 'OK', 'Information')
+            [void][System.Windows.Forms.MessageBox]::Show($L.NoResults, $L.WarnTitle, 'OK', 'Information')
             return
         }
         $sd = New-Object System.Windows.Forms.SaveFileDialog
@@ -954,7 +1174,7 @@ function Show-BigFileFinder {
             }
         }
         $rows | Export-Csv -LiteralPath $sd.FileName -NoTypeInformation -Encoding UTF8
-        $script:lblStatus.Text = ('تم التصدير إلى: ' + $sd.FileName)
+        $script:lblStatus.Text = ($L.ExportedTo + $sd.FileName)
     })
 
     $script:dgvF.Add_CellDoubleClick({
@@ -1018,11 +1238,11 @@ function Show-BigFileFinder {
 }
 
 # ==================================================================
-#  نقطة الدخول
+#  نقطة الدخول / entry point
 # ==================================================================
 if ($SelfTest) {
     $r = Show-BigFileFinder -BuildOnly
-    Write-Host ('SelfTest: ' + $r) -ForegroundColor Green
+    Write-Host ('SelfTest: ' + $r + ' (lang=' + $script:UILang + ')') -ForegroundColor Green
     return
 }
 
@@ -1033,7 +1253,7 @@ if ($Shot) {
 }
 
 if ($NoGui) {
-    if (-not $Path) { throw 'استخدم -Path لتحديد المسار في الوضع النصي.' }
+    if (-not $Path) { throw $script:L.CNoPath }
     Invoke-ConsoleScan -Root $Path -MinMB $MinSizeMB -TopN $Top -CsvOut $Csv
     return
 }

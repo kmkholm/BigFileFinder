@@ -4,11 +4,18 @@
 
 A single-file, zero-install Windows tool (PowerShell 5.1 + WinForms) that scans any folder
 or whole drive, ranks every large file and folder by size, and lets you delete, move or
-export them. Arabic right-to-left interface.
+export them. **Bilingual interface — English and Arabic (right-to-left)**, switched from a
+button in the toolbar.
 
 **Author:** Dr. Mohammed Tawfik — د. محمد توفيق · <kmkhol01@gmail.com>
 
-![screenshot](screenshot.png)
+![English interface](screenshot-en.png)
+
+<p align="center"><em>English</em></p>
+
+![واجهة عربية](screenshot.png)
+
+<p align="center"><em>العربية — same build, one click away</em></p>
 
 ---
 
@@ -32,6 +39,7 @@ entire tree in seconds and answers the only question that matters: *what is eati
 | **Colour tiers** | Rows colour themselves: >5 GB red, >1 GB orange, >200 MB yellow |
 | **Real numeric sorting** | Click the Size header — sorts by bytes, not alphabetically |
 | **Live filters** | Any text in the path, and an extension list (`mp4;iso;zip`) |
+| **Two languages** | English and Arabic RTL; the choice is remembered between runs |
 | **Delete to Recycle Bin** | Reversible (`Delete` key) |
 | **Permanent delete** | Frees space immediately (`Shift+Delete`), single confirmation |
 | **Move to folder** | Archive big research data to another drive instead of deleting it |
@@ -50,6 +58,16 @@ No installation. Download the folder and double-click:
 Requires Windows 7 or later with Windows PowerShell 5.1 (preinstalled on Windows 10/11).
 The launcher passes `-ExecutionPolicy Bypass`, so no system policy change is needed.
 
+## Language
+
+The interface starts in the language of your Windows installation — Arabic on an Arabic
+Windows, English everywhere else. The toolbar button (`عربي` / `English`) switches it and
+remembers the choice in `%LOCALAPPDATA%\BigFileFinder\lang.txt`. You can also force it:
+
+```powershell
+powershell -ExecutionPolicy Bypass -STA -File BigFileFinder.ps1 -Lang en
+```
+
 ## Command line
 
 ```powershell
@@ -65,6 +83,7 @@ powershell -ExecutionPolicy Bypass -STA -File BigFileFinder.ps1 -Path "D:\" -Min
 | `-Path` | Folder or drive to scan |
 | `-MinSizeMB` | Ignore files smaller than this (default 100) |
 | `-Top` | Rows to display (default 500) |
+| `-Lang` | `en` or `ar`; omitted, it follows the saved choice then the system language |
 | `-Csv` | Write the result to a CSV file (text mode) |
 | `-NoGui` | Console output instead of the window |
 | `-AutoScan` | Start scanning as soon as the window opens |
@@ -75,6 +94,8 @@ powershell -ExecutionPolicy Bypass -STA -File BigFileFinder.ps1 -Path "D:\" -Min
 
 - `BigFileFinder.ps1` **must keep its UTF-8 BOM**, otherwise Windows PowerShell 5.1 mangles
   every Arabic string in the interface.
+- All interface text lives in one `Get-Strings` table, one entry per language — adding a
+  third language means adding one branch there, nothing else.
 - The scanner is a C# class compiled by `Add-Type` at startup; a pure PowerShell loop is
   an order of magnitude too slow for a million files.
 - Size columns display a formatted string but sort through a hidden bytes column via
@@ -97,6 +118,9 @@ MIT — see [LICENSE](LICENSE).
 
 **التشغيل:** انقر مرتين على `BigFileFinder.cmd`، أو على `فحص مجلد Downloads.cmd` لفحص
 مجلد التنزيلات مباشرة. لفحص المجلدات المحمية اضغط زر «تشغيل كمسؤول».
+
+**اللغة:** زر `English` / `عربي` في شريط الأدوات يبدّل لغة الواجهة بالكامل، ويحفظ اختيارك
+للمرات القادمة.
 
 **ألوان الصفوف:** أحمر فاتح لما يزيد عن 5 ج.ب، برتقالي لما يزيد عن 1 ج.ب، أصفر لما يزيد
 عن 200 م.ب.
